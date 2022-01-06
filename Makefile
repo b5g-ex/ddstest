@@ -1,50 +1,82 @@
-# Makefile for building the NIF
-#
-# MIX_APP_PATH		path to the build directory
-# ERL_EI_INCLUDE_DIR	include path to erlang header
-# ERL_EI_LIBDIR		path to erlang/c libraries (Not necessary for NIFs)
- 
-PREFIX = $(MIX_APP_PATH)/priv
-BUILD = $(MIX_APP_PATH)/obj
 
-NIF = $(PREFIX)/ddstest_nif.so
+$(info $$(CC) is [$(CC)])
+$(info $$(RM) is [$(RM)])
+$(info $$(MIX_TARGET) is [$(MIX_TARGET)])
+$(info $$(MIX_APP_PATH) is [$(MIX_APP_PATH)])
+$(info $$(MIX_BUILD_PATH) is [$(MIX_BUILD_PATH)])
+$(info $$(NERVES_SDK_SYSROOT) is [$(NERVES_SDK_SYSROOT)])
+$(info $$(LIBS) is [$(LIBS)])
 
-CC = gcc
-RM = rm
+ifeq ($(MIX_TARGET),host)
+INSTALL_DIR ?= /usr/local
+else
+export INSTALL_DIR = $(MIX_BUILD_PATH)/nerves/rootfs_overlay/usr
+endif
 
-CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter -pedantic -fPIC
+DDS_SRC_DIR = src/cyclonedds
+DDS_BUILD_DIR = $(MIX_BUILD_PATH)/cyclonedds
+DDS_CMAKE = cyclonedds.cmake
+
+#================
+MIX_APP_PRIV_DIR = $(MIX_APP_PATH)/priv
+MIX_APP_OBJ_DIR  = $(MIX_APP_PATH)/obj
+
+CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter
+CFLAGS += -fPIC
 LDFLAGS += -fPIC -shared
 
-# Set Erlang-specific compiler and linker flags
+# Set Erlang-specific compile and linker flags
 ERL_CFLAGS ?= -I$(ERL_EI_INCLUDE_DIR)
-ERL_LDFLAGS ?= -L$(ERL_EI_LIBDIR)
+ERL_LDFLAGS ?= -L$(ERL_EI_LIBDIR) -lei
 
-DDS_LDFLAGS ?= -L/usr/local/lib
-DDS_LDFLAGS += -lddsc
+CFLAGS += -I$(INSTALL_DIR)/include
+LIBS += -L$(INSTALL_DIR)/lib -lddsc
 
-SRC = src/ddstest_nif.c src/HelloWorldData.c
-HEADERS =$(wildcard src/*.h)
-OBJ =$(SRC:src/%.c=$(BUILD)/%.o)
+DDS_APP_HEADERS = $(wildcard src/ddstest/*.h)
+DDS_APP_SRC = $(wildcard src/ddstest/*.c)
+DDS_APP_OBJ = $(DDS_APP_SRC:src/ddstest/%.c=$(MIX_APP_OBJ_DIR)/%.o)
+DDS_APP_NIF = $(MIX_APP_PRIV_DIR)/ddstest_nif.so
+#================
 
-all: install
+#all: install-dds install-dds-app
+all: install-dds-app
+	@echo "all"
 
-install: $(PREFIX) $(BUILD) $(NIF)
+install-dds-app: $(MIX_APP_PRIV_DIR) $(MIX_APP_OBJ_DIR) $(DDS_APP_NIF)
 
-$(OBJ): $(HEADERS) Makefile
+install-dds: build-dds
+	@echo $@
+	@cmake --build $(DDS_BUILD_DIR) --target install
 
-$(BUILD)/%.o: src/%.c
+build-dds:
+	@echo $@
+	@mkdir -p $(DDS_BUILD_DIR)
+	@cp src/$(DDS_CMAKE) $(DDS_BUILD_DIR)/$(DDS_CMAKE)
+	@cmake -D CMAKE_TOOLCHAIN_FILE=$(DDS_CMAKE) -S $(DDS_SRC_DIR) -B $(DDS_BUILD_DIR)
+	@cmake --build $(DDS_BUILD_DIR)
+
+$(DDS_APP_OBJ): $(DDS_APP_HEADERS) Makefile
+
+$(MIX_APP_OBJ_DIR)/%.o: src/ddstest/%.c
+	@echo "MIX_APP_OBJ_DIR"
+	@echo $@
 	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) -o $@ $<
 
-$(NIF): $(OBJ)
-	$(CC) -o $@ $(ERL_LDFLAGS) $(LDFLAGS) $^ $(DDS_LDFLAGS)
+$(DDS_APP_NIF): $(DDS_APP_OBJ)
+	@echo "DDS_APP_NIF"
+	@echo $@
+	$(CC) $(LDFLAGS) -o $@ $^ $(ERL_LDFLAGS) $(LIBS)
 
-$(PREFIX):
-	mkdir -p $@
+$(MIX_APP_PRIV_DIR) $(MIX_APP_OBJ_DIR):
+	@mkdir -p $@
 
-$(BUILD):
-	mkdir -p $@
+clean: clean-dds clean-dds-app
+	@echo "clean"
 
-clean:
-	$(RM) $(NIF) $(BUILD)/*.o
+clean-dds:
+	@rm -rf $(DDS_BUILD_DIR)
 
-.PHONY: all clean install
+clean-dds-app:
+	@rm -rf $(DDS_APP_NIF) $(DDS_APP_OBJ)
+
+.PHONY: all install-dds install-dds-app clean clean-dds clean-dds-app
